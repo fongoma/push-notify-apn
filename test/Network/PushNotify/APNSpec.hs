@@ -6,6 +6,8 @@ import           Data.Aeson
 import           Network.PushNotify.APN
 import           Test.Hspec
 
+import qualified Data.Vector as V
+
 spec :: Spec
 spec = do
   describe "JsonApsMessage" $
@@ -28,6 +30,17 @@ spec = do
             "sound"    .= Null,
             "badge"    .= Null,
             "alert"    .= object [ "body"  .= String "hello world" ]
+          ]
+      it "encodes an APNS message with a localized title and body" $
+        toJSON (locAlertMessage "hello_world" ["foo", "bar", "buzz"]) `shouldBe`
+          object [
+            "category"   .= Null,
+            "sound"      .= Null,
+            "badge"      .= Null,
+            "alert"      .= object [
+              "loc-key"  .= String "hello_world",
+              "loc-args" .= (Array (V.fromList [String "foo", String "bar", String "buzz"]))
+            ]
           ]
 
   describe "JsonAps" $

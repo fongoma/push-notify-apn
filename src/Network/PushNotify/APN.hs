@@ -22,10 +22,13 @@ module Network.PushNotify.APN
     , sendSilentMessage
     , sendRawMessage
     , alertMessage
+    , locAlertMessage
     , bodyMessage
     , emptyMessage
     , setAlertMessage
     , setMessageBody
+    , setAlertTitleLoc
+    , setAlertLoc
     , setBadge
     , setCategory
     , setSound
@@ -51,9 +54,9 @@ import           Control.Concurrent.QSem
 import           Control.Exception
 import           Control.Monad
 import           Data.Aeson
+import           Data.Aeson.Casing                    (snakeCase)
 import           Data.Aeson.Types
 import           Data.ByteString                      (ByteString)
-import           Data.Char                            (toLower)
 import           Data.Default                         (def)
 import           Data.Either
 import           Data.Int
@@ -120,6 +123,12 @@ newtype ApnToken = ApnToken { unApnToken :: ByteString }
 class SpecifyError a where
     isAnError :: IOError -> a
 
+trainCase :: String -> String
+trainCase = map replace . snakeCase
+  where
+    replace '_' = '-'
+    replace c   = c
+
 -- | Create a token from a raw bytestring
 rawToken
     :: ByteString
@@ -160,13 +169,21 @@ instance SpecifyError ApnMessageResult where
 data JsonApsAlert = JsonApsAlert
     { jaaTitle :: !(Maybe Text)
     -- ^ A short string describing the purpose of the notification.
-    , jaaBody  :: !Text
+    , jaaBody  :: !(Maybe Text)
     -- ^ The text of the alert message.
+    , jaaTitleLocKey :: !(Maybe Text)
+    -- ^ The key for a localized title string.
+    , jaaTitleLocArgs :: !(Maybe [Text])
+    -- ^ An array of strings containing replacement values for variables in your title string. Each %@ character in the string specified by the title-loc-key is replaced by a value from this array.
+    , jaaLocKey  :: !(Maybe Text)
+    -- ^ The key for a localized message string.
+    , jaaLocArgs  :: !(Maybe [Text])
+    -- ^ An array of strings containing replacement values for variables in your message text. Each %@ character in the string specified by loc-key is replaced by a value from this array.
     } deriving (Generic, Show)
 
 instance ToJSON JsonApsAlert where
     toJSON     = genericToJSON     defaultOptions
-        { fieldLabelModifier = drop 3 . map toLower
+        { fieldLabelModifier = trainCase . drop 3
         , omitNothingFields  = True
         }
 
@@ -254,6 +271,16 @@ alertMessage
     -- ^ The modified message
 alertMessage title text = setAlertMessage title text emptyMessage
 
+-- | Create a new APN message with a localized alert part
+locAlertMessage
+    :: Text
+    -- ^ The l10n key of the message body
+    -> [Text]
+    -- ^ The l10n args of the message body
+    -> JsonApsMessage
+    -- ^ The modified message
+locAlertMessage key args = setAlertLoc key args emptyMessage
+
 -- | Create a new APN message with a body and no title
 bodyMessage
     :: Text
@@ -274,7 +301,7 @@ setAlertMessage
     -- ^ The modified message
 setAlertMessage title text a = a { jamAlert = Just jam }
   where
-    jam = JsonApsAlert (Just title) text
+    jam = JsonApsAlert (Just title) (Just text) Nothing Nothing Nothing Nothing
 
 -- | Set the body of an APN message without affecting the title
 setMessageBody
@@ -287,8 +314,40 @@ setMessageBody
 setMessageBody text a = a { jamAlert = Just newJaa }
   where
     newJaa = case jamAlert a of
-                Nothing  -> JsonApsAlert Nothing text
-                Just jaa -> jaa { jaaBody = text }
+                Nothing  -> JsonApsAlert Nothing (Just text) Nothing Nothing Nothing Nothing
+                Just jaa -> jaa { jaaBody = Just text }
+
+-- | Set the localized body of an APN message
+setAlertLoc
+    :: Text
+    -- ^ The l10n key of the message body
+    -> [Text]
+    -- ^ The l10n args of the message body
+    -> JsonApsMessage
+    -- ^ The message to alter
+    -> JsonApsMessage
+    -- ^ The modified message
+setAlertLoc key args a = a { jamAlert = Just newJaa }
+  where
+    newJaa = case jamAlert a of
+                Nothing  -> JsonApsAlert Nothing Nothing Nothing Nothing (Just key) (Just args)
+                Just jaa -> jaa { jaaLocKey = Just key, jaaLocArgs = Just args }
+
+-- | Set the localized title of an APN message
+setAlertTitleLoc
+    :: Text
+    -- ^ The l10n key of the message title
+    -> [Text]
+    -- ^ The l10n args of the message title
+    -> JsonApsMessage
+    -- ^ The message to alter
+    -> JsonApsMessage
+    -- ^ The modified message
+setAlertTitleLoc key args a = a { jamAlert = Just newJaa }
+  where
+    newJaa = case jamAlert a of
+                Nothing  -> JsonApsAlert Nothing Nothing (Just key) (Just args) Nothing Nothing
+                Just jaa -> jaa { jaaTitleLocKey = Just key, jaaTitleLocArgs = Just args }
 
 -- | Remove the alert part of an APN message
 clearAlertMessage
@@ -300,7 +359,7 @@ clearAlertMessage a = a { jamAlert = Nothing }
 
 instance ToJSON JsonApsMessage where
     toJSON     = genericToJSON     defaultOptions
-        { fieldLabelModifier = drop 3 . map toLower }
+        { fieldLabelModifier = trainCase . drop 3 }
 
 -- | A push notification message
 data JsonAps
